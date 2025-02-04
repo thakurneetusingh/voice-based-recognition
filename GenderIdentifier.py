@@ -6,14 +6,13 @@ from FeaturesExtractor import FeaturesExtractor
 from hmmlearn import hmm
 
 warnings.filterwarnings("ignore")
-
-import pydub
 import subprocess
 import speech_recognition as sr
 from pydub import AudioSegment
 from subprocess import Popen, PIPE
 from pydub.silence import split_on_silence, detect_nonsilent
 
+import keras
 
 class GenderIdentifier:
 
@@ -26,8 +25,21 @@ class GenderIdentifier:
         # load models
         self.females_gmm = pickle.load(open(females_model_path, 'rb'))
         self.males_gmm   = pickle.load(open(males_model_path, 'rb'))
-        self.ubm         = pickle.load(open("ubm.hmm", 'rb'))
         
+        # svm
+        self.X_train = np.vstack((self.females_gmm, self.males_gmm))
+        self.y_train = np.hstack(( 0 * np.ones(self.females_gmm.shape[0]), np.ones(self.males_gmm.shape[0])))
+        print(self.X_train.shape, self.y_train.shape)
+        # define the keras model
+        self.model = keras.Sequential()
+        self.model.add(keras.layers.Dense(39, input_dim=39, activation='relu'))
+        self.model.add(keras.layers.Dense(13, activation='relu'))
+        self.model.add(keras.layers.Dense( 2, activation='sigmoid'))
+        
+        self.model.compile(optimizer = 'adam',
+                           loss      = 'binary_crossentropy',
+                           metrics   = ['accuracy'])
+        self.model.fit(self.X_train, keras.utils.to_categorical(self.y_train), epochs = 5)
         
     def ffmpeg_silence_eliminator(self, input_path, output_path):
         """
@@ -73,23 +85,36 @@ class GenderIdentifier:
             self.total_sample += 1
             print("%10s %8s %1s" % ("--> TESTING", ":", os.path.basename(file)))
 
-            self.ffmpeg_silence_eliminator(file, file.split('.')[0] + "_without_silence.wav")
-        
+            #self.ffmpeg_silence_eliminator(file, file.split('.')[0] + "_without_silence.wav")
+
             # extract MFCC & delta MFCC features from audio
             try: 
-                vector = self.features_extractor.extract_features(file.split('.')[0] + "_without_silence.wav")
-                winner = self.identify_gender(vector)
+                # vector = self.features_extractor.extract_features(file.split('.')[0] + "_without_silence.wav")
+                vector = self.features_extractor.extract_features(file)
+                spk_gmm = hmm.GaussianHMM(n_components=16)      
+                spk_gmm.fit(vector)
+                self.spk_vec = spk_gmm.means_
+                print(self.spk_vec.shape)
+                prediction = list(self.model.predict_classes(self.spk_vec))
+                print(prediction)
+                if prediction.count(0) <= prediction.count(1) : sc = 1
+                else                                          : sc = 0
+                
+                genders = {0: "female", 1: "male"}
+                winner = genders[sc]
                 expected_gender = file.split("/")[1][:-1]
-
+                print(expected_gender)
+                
                 print("%10s %6s %1s" % ("+ EXPECTATION",":", expected_gender))
                 print("%10s %3s %1s" %  ("+ IDENTIFICATION", ":", winner))
-
+    
                 if winner != expected_gender: self.error += 1
                 print("----------------------------------------------------")
-
     
-            except : pass
-            os.remove(file.split('.')[0] + "_without_silence.wav")
+
+            except : print("Error")
+            # os.remove(file.split('.')[0] + "_without_silence.wav")
+            
             
         accuracy     = ( float(self.total_sample - self.error) / float(self.total_sample) ) * 100
         accuracy_msg = "*** Accuracy = " + str(round(accuracy, 3)) + "% ***"

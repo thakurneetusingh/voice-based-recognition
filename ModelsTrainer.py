@@ -24,11 +24,6 @@ class ModelsTrainer:
         self.features_extractor    = FeaturesExtractor()
 
 
-
-
-
-
-
     def ffmpeg_silence_eliminator(self, input_path, output_path):
         """
         Eliminate silence from voice file using ffmpeg library.
@@ -68,25 +63,35 @@ class ModelsTrainer:
 
 
 
-
     def process(self):
         females, males = self.get_file_paths(self.females_training_path,
                                              self.males_training_path)
+        files = females + males
         # collect voice features
-        female_voice_features = self.collect_features(females)
-        male_voice_features   = self.collect_features(males)
-        # generate gaussian mixture models
-        females_gmm = hmm.GaussianHMM(n_components=3)
-        males_gmm   = hmm.GaussianHMM(n_components=3)
-        ubm         = hmm.GaussianHMM(n_components=3)
-        # fit features to models
-        females_gmm.fit(female_voice_features)
-        males_gmm.fit(male_voice_features)
-        ubm.fit(np.vstack((female_voice_features, male_voice_features)))
+        features = {"female" : np.asarray(()), "male" : np.asarray(())}
+        
+        for file in files:
+            print("%10s %8s %1s" % ("--> TESTING", ":", os.path.basename(file)))
+            print(features["female"].shape, features["male"].shape)
+            # extract MFCC & delta MFCC features from audio
+            try: 
+                # vector = self.features_extractor.extract_features(file.split('.')[0] + "_without_silence.wav")
+                vector  = self.features_extractor.extract_features(file)
+                spk_gmm = hmm.GaussianHMM(n_components=16)      
+                spk_gmm.fit(vector)
+                spk_vec = spk_gmm.means_
+                gender  = file.split("/")[1][:-1]
+                print(gender)
+                # stack super vectors
+                if features[gender].size == 0:  features[gender] = spk_vec
+                else                         :  features[gender] = np.vstack((features[gender], spk_vec))
+            
+            except:
+                pass
+        
         # save models
-        self.save_gmm(females_gmm, "females")
-        self.save_gmm(males_gmm,   "males")
-        self.save_gmm(males_gmm,   "ubm")
+        self.save_gmm(features["female"], "females")
+        self.save_gmm(features["male"],   "males")
 
 
     def get_file_paths(self, females_training_path, males_training_path):
@@ -97,14 +102,14 @@ class ModelsTrainer:
 
     def collect_features(self, files):
         """
-    	Collect voice features from various speakers of the same gender.
-
-    	Args:
-    	    files (list) : List of voice file paths.
-
-    	Returns:
-    	    (array) : Extracted features matrix.
-    	"""
+        	Collect voice features from various speakers of the same gender.
+    
+        	Args:
+        	    files (list) : List of voice file paths.
+    
+        	Returns:
+        	    (array) : Extracted features matrix.
+        	"""
         features = np.asarray(())
         # extract features for each speaker
         for file in files:
@@ -128,7 +133,9 @@ class ModelsTrainer:
                 gmm        : Gaussian mixture model.
                 name (str) : File name.
         """
-        filename = name + ".hmm"
+        import os
+        path     = os.path.dirname(__file__)
+        filename = path + "/" + name + ".hmm"
         with open(filename, 'wb') as gmm_file:
             pickle.dump(gmm, gmm_file)
         print ("%5s %10s" % ("SAVING", filename,))
