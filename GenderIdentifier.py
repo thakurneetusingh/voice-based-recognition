@@ -6,13 +6,16 @@ from FeaturesExtractor import FeaturesExtractor
 from hmmlearn import hmm
 
 warnings.filterwarnings("ignore")
+
+import pydub
 import subprocess
 import speech_recognition as sr
 from pydub import AudioSegment
 from subprocess import Popen, PIPE
 from pydub.silence import split_on_silence, detect_nonsilent
 
-import keras
+from sklearn.svm import SVC
+
 
 class GenderIdentifier:
 
@@ -28,18 +31,9 @@ class GenderIdentifier:
         
         # svm
         self.X_train = np.vstack((self.females_gmm, self.males_gmm))
-        self.y_train = np.hstack(( 0 * np.ones(self.females_gmm.shape[0]), np.ones(self.males_gmm.shape[0])))
-        print(self.X_train.shape, self.y_train.shape)
-        # define the keras model
-        self.model = keras.Sequential()
-        self.model.add(keras.layers.Dense(39, input_dim=39, activation='relu'))
-        self.model.add(keras.layers.Dense(13, activation='relu'))
-        self.model.add(keras.layers.Dense( 2, activation='sigmoid'))
-        
-        self.model.compile(optimizer = 'adam',
-                           loss      = 'binary_crossentropy',
-                           metrics   = ['accuracy'])
-        self.model.fit(self.X_train, keras.utils.to_categorical(self.y_train), epochs = 5)
+        self.y_train = np.hstack(( -1 * np.ones(self.females_gmm.shape[0]), np.ones(self.males_gmm.shape[0])))
+        self.clf = SVC(kernel = 'rbf', probability=True)
+        self.clf.fit(self.X_train, self.y_train)
         
     def ffmpeg_silence_eliminator(self, input_path, output_path):
         """
@@ -91,27 +85,31 @@ class GenderIdentifier:
             try: 
                 # vector = self.features_extractor.extract_features(file.split('.')[0] + "_without_silence.wav")
                 vector = self.features_extractor.extract_features(file)
+                print("S1")
+                # generate gaussian mixture models
                 spk_gmm = hmm.GaussianHMM(n_components=16)      
+                print("S2")
+
+                # fit features to models
                 spk_gmm.fit(vector)
-                self.spk_vec = spk_gmm.means_
-                print(self.spk_vec.shape)
-                prediction = list(self.model.predict_classes(self.spk_vec))
-                print(prediction)
-                if prediction.count(0) <= prediction.count(1) : sc = 1
-                else                                          : sc = 0
+                print("S3")
                 
-                genders = {0: "female", 1: "male"}
+                self.spk_vec = spk_gmm.means_
+                print(self.clf.predict(self.spk_vec))
+                if sum(self.clf.predict(self.spk_vec)) > 0 : sc =  1
+                else                                       : sc = -1
+                genders = {-1: "female", 1: "male"}
                 winner = genders[sc]
                 expected_gender = file.split("/")[1][:-1]
                 print(expected_gender)
                 
                 print("%10s %6s %1s" % ("+ EXPECTATION",":", expected_gender))
                 print("%10s %3s %1s" %  ("+ IDENTIFICATION", ":", winner))
-    
+
                 if winner != expected_gender: self.error += 1
                 print("----------------------------------------------------")
-    
 
+    
             except : print("Error")
             # os.remove(file.split('.')[0] + "_without_silence.wav")
             
